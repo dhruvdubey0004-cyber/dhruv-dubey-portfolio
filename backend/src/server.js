@@ -99,6 +99,13 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+
+// instead of only app.listen
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => console.log(`Running on ${PORT}`))
+}
+module.exports = app;
+
 app.get('/', (req, res) => res.send("Backend Running"));
 
 const PORT = process.env.PORT || 5001;
