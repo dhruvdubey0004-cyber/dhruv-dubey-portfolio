@@ -16,10 +16,46 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// 2. MongoDB Connect
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => console.log(err));
+// 2. MongoDB Connect (Serverless & Local Friendly)
+let isConnecting = null;
+
+const connectDB = async () => {
+    if (mongoose.connection.readyState === 1) {
+        return;
+    }
+    if (!process.env.MONGO_URI) {
+        throw new Error("MONGO_URI environment variable is not defined.");
+    }
+    if (!isConnecting) {
+        isConnecting = mongoose.connect(process.env.MONGO_URI, {
+            serverSelectionTimeoutMS: 5000,
+        }).then((m) => {
+            console.log("MongoDB Connected");
+            return m;
+        }).catch((err) => {
+            isConnecting = null;
+            throw err;
+        });
+    }
+    await isConnecting;
+};
+
+// Database connection check middleware
+app.use(async (req, res, next) => {
+    if (req.path === '/' || req.path === '/api/health') {
+        return next();
+    }
+    try {
+        await connectDB();
+        next();
+    } catch (err) {
+        console.error("Database connection error:", err.message);
+        return res.status(503).json({
+            success: false,
+            error: "Database connection failed. Please ensure MongoDB Atlas Network Access has 0.0.0.0/0 allowed."
+        });
+    }
+});
 
 // 3. Model
 const formSchema = new mongoose.Schema({
@@ -35,11 +71,18 @@ const FormData = mongoose.model('FormData', formSchema);
 
 // 4. Health Check
 app.get('/', (req, res) => res.send("Backend Running"));
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+    let dbStatus = "Disconnected";
+    try {
+        await connectDB();
+        dbStatus = "Connected";
+    } catch (e) {
+        dbStatus = `Error: ${e.message}`;
+    }
     res.json({
         success: true,
         status: "Backend Running",
-        mongodb: mongoose.connection.readyState === 1 ? "Connected" : "Disconnected",
+        mongodb: dbStatus,
         time: new Date().toISOString()
     });
 });
@@ -91,7 +134,8 @@ app.get('/api/contact', async (req, res) => {
 
 // 6. Vercel ke liye export, Local ke liye listen
 if (process.env.NODE_ENV !== 'production') {
-    app.listen(PORT, () => console.log(`Server: http://localhost:${PORT}`))
+    connectDB().catch(err => console.error("Initial MongoDB Connection Error:", err.message));
+    app.listen(PORT, () => console.log(`Server: http://localhost:${PORT}`));
 }
 
 module.exports = app;
